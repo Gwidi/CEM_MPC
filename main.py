@@ -82,7 +82,7 @@ def j_LTO(x, u, delta_s, curvature, R, model, q_beta=0.5, qn=5.0, qmu=10.0):
     n = x[1]
 
     # Prędkość postępu po torze (wg wzoru z artykułu)
-    s_dot = (vx * np.cos(mu) - vy * np.sin(mu)) / (1 - n * curvature)
+    s_dot = (vx * np.cos(mu) - vy * np.sin(mu)) / (1 - n * curvature + 1e-6)
     # Term 1: czas na krok (czyli Δs / s_dot)
     term1 = delta_s / (s_dot + 1e-6)   # +1e-6 żeby uniknąć dzielenia przez zero
 
@@ -234,6 +234,8 @@ env = RaceCarEnv(model, track_s, curvature)
 delta_s = track_s[1] - track_s[0]  # Krok po długości toru
 obs = env.reset()
 
+R = np.diag([0.5,0.2])
+
 for _ in range(200):
     action = CEM_MPC_control(
         model, obs, track_s, curvature,
@@ -241,7 +243,8 @@ for _ in range(200):
         horizon=10,         # np. 10 kroków do przodu
         samples=64,
         elite_frac=0.2,
-        iterations=4
+        iterations = 4,
+        R= R
     )
     #action = env.action_space.sample()
     obs, reward, done, _ = env.step(action)
