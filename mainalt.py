@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri May 30 17:07:38 2025
+
+@author: UseV
+"""
+
 import gym
 from gym import spaces
 import numpy as np
@@ -64,91 +71,63 @@ def generate_test_track(num_points=10000):
     #curvature = 0.05 * np.sin(0.1 * s)
     curvature=np.ones(num_points)*0.02
     return s, curvature
-
-def j_LTO(x, u, delta_s, curvature, R, model,dt, q_beta=0.5, qn=10.0, qmu=10.0,):
+def j_LTO(x, u, dt, R, model, curvature,q_beta=0.5):
     """
-    Funkcja kosztu j_LTO do optymalizacji okrążenia (LTO).
-    - x: stan [s, n, mu, vx, vy, r, delta, T]
-    - u: sterowanie [delta_dot, T_dot]
-    - delta_s: krok po długości toru (Δs)
-    - R: macierz wagowa dla sterowań (2x2)
-    - model: model pojazdu
-    - q_beta: waga regularizacyjna kąta poślizgu
+    Evaluate the j_LTO function.
 
-    Zwraca: koszt (float)
+    Parameters:
+    - x_k: np.array, the state vector at step k
+    - u_k: np.array, the control vector at step k
+    - delta_s: float, the step size Δs
+    - s_dot_k: float, the speed at step k (dot{s}_k)
+    - R: np.array, weight matrix for the control vector
+    - B_func: function, computes B(x_k)
+
+    Returns:
+    - j_lto: float, the evaluated cost
     """
-    # Odpowiednik prędkości postępu po torze s_dot (z modelu krzywoliniowego)
-    vx, vy, mu = x[3], x[4], x[2]
-    n = x[1]
-
-    # Prędkość postępu po torze (wg wzoru z artykułu)
-    s_dot = (vx * np.cos(mu) - vy * np.sin(mu)) / (1 - n * curvature)
-    # Term 1: czas na krok (czyli Δs / s_dot)
-    term1 = -dt * s_dot   # +1e-6 żeby uniknąć dzielenia przez zero
-
-    # Term 2: penalizacja sterowania
+    qn=1 
+    qmu=1 
+    term4=qn*x[1]**2
+    term5=qmu*x[2]**2
+    s_dot = (x[3] * np.cos(x[2]) - x[4] * np.sin(x[2])) / (1 - curvature * x[1])
+    term1 = -dt * s_dot
     term2 = u.T @ R @ u
-
-    # Term 3: regularizacja kąta poślizgu
-    beta_dyn = np.arctan2(vy, vx)
-    beta_kin = np.arctan2(x[6] * model.lR, model.lF + model.lR)
+    beta_dyn = np.arctan(x[4] / x[3])
+        
+    beta_kin = np.arctan((x[6] * model.lR) / (model.lF + model.lR))
+    
     term3 = q_beta * (beta_dyn - beta_kin) ** 2
-    term4 = qn * n**2 + qmu * mu**2
+    
 
-    return term1 + term2 + term3 + term4
-
+    return term1 + term2 + term3 + term4 + term5
 # --- Cross-Entropy MPC ---
-def CEM_MPC_control(model, x0, track_s, curvature, dt=0.05,
-                 horizon=10, iterations=5, elite_frac=0.2, samples=64,
-                 u_bounds=((-1,1),(-1,1)),   # Ograniczenia na (delta_dot, T_dot)
-                 R=np.eye(2),                # Macierz wagowa do kosztu sterowania
-                 q_beta=0.5
-):
-    """
-    CEM-MPC: optymalizuje całą sekwencję sterowań na H kroków.
-    Zwraca optymalny pierwszy krok oraz (opcjonalnie) całą trajektorię sterowań.
-    """
-    D = 2  # liczba sterowań na jeden krok (delta_dot, T_dot)
-    H = horizon
-
-    # Inicjalizacja rozkładów: średnia i odchylenie standardowe
-    mu = np.zeros((H, D))
-    sigma = np.ones((H, D)) * 0.5
-
-    # Granice sterowań
-    u_min = np.array([u_bounds[0][0], u_bounds[1][0]])
-    u_max = np.array([u_bounds[0][1], u_bounds[1][1]])
-
-    N_elite = max(2, int(samples * elite_frac))
-
-    for it in range(iterations):
-        # 1. Losuj N sekwencji sterowań (N x H x 2)
-        actions = np.random.randn(samples, H, D) * sigma + mu
-        actions = np.clip(actions, u_min, u_max)  # przytnij do granic
-
-        costs = np.zeros(samples)
-        for i in range(samples):
-            x = x0.copy()         # stan początkowy
-            cost = 0.0
-            for k in range(H):
-                u = actions[i, k]
-                idx = np.argmin(np.abs(track_s - x[0]))
-                curv = curvature[idx]
-                x = model.rk4_step(x, u, curv, dt)
-                # Funkcja kosztu – możesz tu użyć własnej (np. j_LTO)
-                cost += j_LTO(x, u, delta_s, curv, R, model,dt, q_beta)
-            costs[i] = cost
-
-        # 2. Wybierz elity (najlepsze trajektorie)
-        elite_idx = costs.argsort()[:N_elite]
-        elite_actions = actions[elite_idx]
-
-        # 3. Uaktualnij średnią i std dla każdego kroku i każdego sterowania
-        mu = elite_actions.mean(axis=0)
-        sigma = elite_actions.std(axis=0) + 1e-6   # zabezpieczenie przed zerowym std
-
-    # Zwróć optymalny pierwszy krok sterowania (delta_dot, T_dot)
-    return mu[0]
+def cem_control(model, x0, track_s, curvature, dt=0.05,
+                samples=64, elite_frac=0.2,iterations=2, dTupper=1,dTlower=-1, ddeltaupper=1, ddeltalower=-1):
+    beta = 1 # the exponent
+    for i in range(iterations):
+        muddelta,mudT=np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
+        stdddelta,stddT=[[abs(ddeltalower-ddeltaupper)/2],[abs(dTlower-dTupper)/2]]
+        actionsdT = cn.powerlaw_psd_gaussian(beta, samples)
+        actionsdT=actionsdT*stddT+mudT
+        actions=np.clip(actionsdT,dTlower,dTupper)
+        actionsddelta = cn.powerlaw_psd_gaussian(beta, samples)
+        actionsddelta=actionsddelta*stdddelta+muddelta
+        actionsddelta=np.clip(actionsddelta,ddeltalower,ddeltaupper)
+        actions=np.transpose([actionsddelta,actionsdT])
+        nextstates=[]
+        costs =[]
+        for x in actions:
+            idx = np.argmin(np.abs(track_s - x0[0]%max(track_s)))
+            curv = curvature[idx]
+            nextstates.append(model.rk4_step(x0,x,curv,dt))
+        for x,y in zip(nextstates,actions):
+            costs.append(j_LTO(x,y,dt,np.eye(len(y)),model,curv))
+        eliteuntruncated=[x for (_,x) in sorted(zip(costs, actions), key=lambda pair: pair[0])]
+        elitetruncated=eliteuntruncated[0:round(elite_frac*len(eliteuntruncated))]
+        muddelta,mudT=np.mean(elitetruncated,axis=0)
+        stdddelta,stddT=np.std(elitetruncated,axis=0)
+    return elitetruncated[0]
 
 # --- Środowisko ---
 class RaceCarEnv(gym.Env):
@@ -231,18 +210,11 @@ class RaceCarEnv(gym.Env):
 model = BicycleModelCurvilinear()
 track_s, curvature = generate_test_track()
 env = RaceCarEnv(model, track_s, curvature)
-delta_s = track_s[1] - track_s[0]  # Krok po długości toru
+
 obs = env.reset()
 
 for _ in range(200):
-    action = CEM_MPC_control(
-        model, obs, track_s, curvature,
-        dt=env.dt,
-        horizon=10,         # np. 10 kroków do przodu
-        samples=64,
-        elite_frac=0.2,
-        iterations=4
-    )
+    action = cem_control(model, obs, track_s, curvature)
     #action = env.action_space.sample()
     obs, reward, done, _ = env.step(action)
     env.render()
