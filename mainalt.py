@@ -63,7 +63,13 @@ class BicycleModelCurvilinear:
         k2 = self.dynamics(x + 0.5 * dt * k1, u, curvature)
         k3 = self.dynamics(x + 0.5 * dt * k2, u, curvature)
         k4 = self.dynamics(x + dt * k3, u, curvature)
-        return x + dt / 6 * (k1 + 2*k2 + 2*k3 + k4)
+        x_new = x + dt / 6 * (k1 + 2*k2 + 2*k3 + k4)
+        # OGRANICZENIE T (napędu)
+        x_new[7] = np.clip(x_new[7], 0.0, 0.01)
+        # OGRANICZENIE delta (kąt skrętu), opcjonalnie:
+        x_new[6] = np.clip(x_new[6], -np.pi/4, np.pi/4)
+
+        return x_new
 
 # --- Generator Trasy ---
 def generate_test_track(num_points=10000):
@@ -102,10 +108,8 @@ def j_LTO(x, u, dt, R, model, curvature,q_beta=0.5,qn=500,qmu=100):
     return term1 + term2 + term3 + term4 + term5
 # --- Cross-Entropy MPC ---
 def cem_control(model, x0, track_s, curvature, dt=0.05,
-                samples=64, elite_frac=0.2,iterations=2, dTupper=1,dTlower=-1, ddeltaupper=1, ddeltalower=-1,horizon=20):
+                samples=64, elite_frac=0.2,iterations=2, dTupper=1.0,dTlower=-1.0, ddeltaupper=1.0, ddeltalower=-1.0,horizon=20):
     beta = 1 # the exponent
-    muddelta,mudT=np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
-    stdddelta,stddT=[[abs(ddeltalower-ddeltaupper)/2],[abs(dTlower-dTupper)/2]]
     mu=np.ones((horizon,2))*np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
     std=np.ones((horizon,2))*[abs(ddeltalower-ddeltaupper)/2,abs(dTlower-dTupper)/2]
     for i in range(iterations):
@@ -210,17 +214,64 @@ class RaceCarEnv(gym.Env):
     def close(self):
         plt.show(block=True)
         plt.close(self.fig)
+    
+def pure_straight_test(model, dt=0.05, steps=200, T_init=0.5, v0=1.0):
+    """
+    Test modelu na prostej drodze.
+    Model dostaje tylko napęd, bez skrętu, bez toru (krzywizna=0).
+    """
+    # Stan początkowy: [s, n, mu, vx, vy, r, delta, T]
+    x = np.array([0, 0, 0, v0, 0, 0, 0, T_init])
+    traj = [x.copy()]
+    u = np.array([0.0, 0.0])  # delta_dot = 0, T_dot = 0
+
+    for _ in range(steps):
+        curvature = 0.0  # prosta
+        x = model.rk4_step(x, u, curvature, dt)
+        traj.append(x.copy())
+
+    traj = np.array(traj)
+
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(10,6))
+    plt.subplot(2,2,1)
+    plt.plot(traj[:,0], traj[:,1])
+    plt.xlabel("s [m]"); plt.ylabel("n [m]"); plt.title("Odchylenie od toru (n)")
+
+    plt.subplot(2,2,2)
+    plt.plot(traj[:,0], traj[:,2])
+    plt.xlabel("s [m]"); plt.ylabel("mu [rad]"); plt.title("Kąt względem toru (mu)")
+
+    plt.subplot(2,2,3)
+    plt.plot(traj[:,0], traj[:,3], label="vx")
+    plt.plot(traj[:,0], traj[:,4], label="vy")
+    plt.xlabel("s [m]"); plt.ylabel("Prędkości [m/s]"); plt.legend(); plt.title("vx, vy")
+
+    plt.subplot(2,2,4)
+    plt.plot(traj[:,0], traj[:,6], label="delta")
+    plt.xlabel("s [m]"); plt.ylabel("delta [rad]"); plt.title("Kąt skrętu (delta)")
+
+    plt.tight_layout()
+    plt.show()
+
+
+
+
 
 model = BicycleModelCurvilinear()
 track_s, curvature = generate_test_track()
 env = RaceCarEnv(model, track_s, curvature)
 
+pure_straight_test(model, dt=0.05, steps=1000, T_init=0.5, v0=5.0)
+
+
+
 obs = env.reset()
 
 for _ in range(200):
     action = cem_control(model, obs, track_s, curvature)
-    #action = env.action_space.sample()
     obs = env.step(action)
+    print("T aktualne:", obs[7])
     
 
 env.close()
