@@ -71,7 +71,7 @@ def generate_test_track(num_points=10000):
     #curvature = 0.05 * np.sin(0.1 * s)
     curvature=np.ones(num_points)*0.02
     return s, curvature
-def j_LTO(x, u, dt, R, model, curvature,q_beta=0.5):
+def j_LTO(x, u, dt, R, model, curvature,q_beta=0.5,qn=500,qmu=100):
     """
     Evaluate the j_LTO function.
 
@@ -86,8 +86,7 @@ def j_LTO(x, u, dt, R, model, curvature,q_beta=0.5):
     Returns:
     - j_lto: float, the evaluated cost
     """
-    qn=1 
-    qmu=1 
+
     term4=qn*x[1]**2
     term5=qmu*x[2]**2
     s_dot = (x[3] * np.cos(x[2]) - x[4] * np.sin(x[2])) / (1 - curvature * x[1])
@@ -103,30 +102,39 @@ def j_LTO(x, u, dt, R, model, curvature,q_beta=0.5):
     return term1 + term2 + term3 + term4 + term5
 # --- Cross-Entropy MPC ---
 def cem_control(model, x0, track_s, curvature, dt=0.05,
-                samples=64, elite_frac=0.2,iterations=2, dTupper=1,dTlower=-1, ddeltaupper=1, ddeltalower=-1):
+                samples=64, elite_frac=0.2,iterations=2, dTupper=1,dTlower=-1, ddeltaupper=1, ddeltalower=-1,horizon=20):
     beta = 1 # the exponent
+    muddelta,mudT=np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
+    stdddelta,stddT=[[abs(ddeltalower-ddeltaupper)/2],[abs(dTlower-dTupper)/2]]
+    mu=np.ones((horizon,2))*np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
+    std=np.ones((horizon,2))*[abs(ddeltalower-ddeltaupper)/2,abs(dTlower-dTupper)/2]
     for i in range(iterations):
-        muddelta,mudT=np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
-        stdddelta,stddT=[[abs(ddeltalower-ddeltaupper)/2],[abs(dTlower-dTupper)/2]]
-        actionsdT = cn.powerlaw_psd_gaussian(beta, samples)
-        actionsdT=actionsdT*stddT+mudT
-        actions=np.clip(actionsdT,dTlower,dTupper)
-        actionsddelta = cn.powerlaw_psd_gaussian(beta, samples)
-        actionsddelta=actionsddelta*stdddelta+muddelta
-        actionsddelta=np.clip(actionsddelta,ddeltalower,ddeltaupper)
-        actions=np.transpose([actionsddelta,actionsdT])
-        nextstates=[]
+        actions = cn.powerlaw_psd_gaussian(beta, (samples,horizon,2))
+        actions=actions*std+mu
+        actions[:,:,0]=np.clip(actions[:,:,0],ddeltalower,ddeltaupper)
+        actions[:,:,1]=np.clip(actions[:,:,1],dTlower,dTupper)
         costs =[]
-        for x in actions:
-            idx = np.argmin(np.abs(track_s - x0[0]%max(track_s)))
-            curv = curvature[idx]
-            nextstates.append(model.rk4_step(x0,x,curv,dt))
-        for x,y in zip(nextstates,actions):
-            costs.append(j_LTO(x,y,dt,np.eye(len(y)),model,curv))
+        for s in actions:
+            cost=0 
+            x=x0
+            traj=[]
+            for h in s:
+                idx = np.argmin(np.abs(track_s - x[0]%max(track_s)))
+                curv = curvature[idx]
+                traj.append(model.rk4_step(x,h,curv,dt))
+            for x,y in zip(traj,s):
+                cost+=j_LTO(x,y,dt,np.eye(len(y)),model,curv)
+            costs.append(cost)
+        # for x in actions:
+        #     idx = np.argmin(np.abs(track_s - x0[0]%max(track_s)))
+        #     curv = curvature[idx]
+        #     nextstates.append(model.rk4_step(x0,x,curv,dt))
+        # for x,y in zip(nextstates,actions):
+        #     costs.append(j_LTO(x,y,dt,np.eye(len(y)),model,curv))
         eliteuntruncated=[x for (_,x) in sorted(zip(costs, actions), key=lambda pair: pair[0])]
         elitetruncated=eliteuntruncated[0:round(elite_frac*len(eliteuntruncated))]
-        muddelta,mudT=np.mean(elitetruncated,axis=0)
-        stdddelta,stddT=np.std(elitetruncated,axis=0)
+        mu=np.mean(elitetruncated,axis=0)
+        std=np.std(elitetruncated,axis=0)
     return elitetruncated[0]
 
 # --- Środowisko ---
@@ -155,21 +163,17 @@ class RaceCarEnv(gym.Env):
         return self.state.copy()
 
     def step(self, action):
-        delta_dot, T_dot = action
-        u = np.array([delta_dot, T_dot])
+        for a in action:    
+            delta_dot, T_dot = a
+            u = np.array([delta_dot, T_dot])
+    
+            idx = np.argmin(np.abs(self.track_s - self.state[0]))
+            curv = self.curvature[idx%len(curvature)]
+            next_state = self.model.rk4_step(self.state, u, curv, self.dt)
+            self.state = next_state
+            env.render()
 
-        idx = np.argmin(np.abs(self.track_s - self.state[0]))
-        curv = self.curvature[idx%len(curvature)]
-        next_state = self.model.rk4_step(self.state, u, curv, self.dt)
-
-        n, mu, vx = next_state[1], next_state[2], next_state[3]
-        cost = 1.0 * n**2 + 0.5 * mu**2 + 0.05 * np.sum(u**2) - 0.1 * vx
-
-        self.state = next_state
-        self.step_count += 1
-        done = self.step_count >= self.max_steps or self.state[0] >= self.track_s[-1]
-
-        return self.state.copy(), -cost, done, {}
+        return self.state.copy()
 
     def _init_render(self):
         self.fig, self.ax = plt.subplots()
@@ -199,7 +203,7 @@ class RaceCarEnv(gym.Env):
         angle = np.rad2deg(mu + ref_theta)
         self.car_patch.set_xy((x_car - self.L / 2, y_car - self.W / 2))
         self.car_patch.angle = angle
-
+        self.step_count+=1
         self.ax.set_title(f"Step {self.step_count}")
         plt.pause(0.07)
 
@@ -216,8 +220,7 @@ obs = env.reset()
 for _ in range(200):
     action = cem_control(model, obs, track_s, curvature)
     #action = env.action_space.sample()
-    obs, reward, done, _ = env.step(action)
-    env.render()
-    if done:
-      break
+    obs = env.step(action)
+    
+
 env.close()
