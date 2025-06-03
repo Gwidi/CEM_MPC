@@ -65,10 +65,9 @@ class BicycleModelCurvilinear:
         k4 = self.dynamics(x + dt * k3, u, curvature)
         x_new = x + dt / 6 * (k1 + 2*k2 + 2*k3 + k4)
         # OGRANICZENIE T (napędu)
-        x_new[7] = np.clip(x_new[7], 0.0, 0.01)
         # OGRANICZENIE delta (kąt skrętu), opcjonalnie:
-        x_new[6] = np.clip(x_new[6], -np.pi/4, np.pi/4)
-
+        # x_new[6] = np.clip(x_new[6], -np.pi/4, np.pi/4)
+        x_new[3] = np.clip(x_new[3], 5.0, np.inf)
         return x_new
 
 # --- Generator Trasy ---
@@ -110,22 +109,28 @@ def j_LTO(x, u, dt, R, model, curvature,q_beta=0.5,qn=500,qmu=100):
 def cem_control(model, x0, track_s, curvature, dt=0.05,
                 samples=64, elite_frac=0.2,iterations=2, dTupper=1.0,dTlower=-1.0, ddeltaupper=1.0, ddeltalower=-1.0,horizon=20):
     beta = 1 # the exponent
+    
     mu=np.ones((horizon,2))*np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
     std=np.ones((horizon,2))*[abs(ddeltalower-ddeltaupper)/2,abs(dTlower-dTupper)/2]
+    
     for i in range(iterations):
         actions = cn.powerlaw_psd_gaussian(beta, (samples,horizon,2))
         actions=actions*std+mu
+        
         actions[:,:,0]=np.clip(actions[:,:,0],ddeltalower,ddeltaupper)
         actions[:,:,1]=np.clip(actions[:,:,1],dTlower,dTupper)
+        
         costs =[]
         for s in actions:
             cost=0 
             x=x0
             traj=[]
+            
             for h in s:
                 idx = np.argmin(np.abs(track_s - x[0]%max(track_s)))
                 curv = curvature[idx]
                 traj.append(model.rk4_step(x,h,curv,dt))
+        
             for x,y in zip(traj,s):
                 cost+=j_LTO(x,y,dt,np.eye(len(y)),model,curv)
             costs.append(cost)
@@ -137,7 +142,9 @@ def cem_control(model, x0, track_s, curvature, dt=0.05,
         #     costs.append(j_LTO(x,y,dt,np.eye(len(y)),model,curv))
         eliteuntruncated=[x for (_,x) in sorted(zip(costs, actions), key=lambda pair: pair[0])]
         elitetruncated=eliteuntruncated[0:round(elite_frac*len(eliteuntruncated))]
+        
         mu=np.mean(elitetruncated,axis=0)
+        
         std=np.std(elitetruncated,axis=0)
     return elitetruncated[0]
 
@@ -224,32 +231,32 @@ def pure_straight_test(model, dt=0.05, steps=200, T_init=0.5, v0=1.0):
     x = np.array([0, 0, 0, v0, 0, 0, 0, T_init])
     traj = [x.copy()]
     u = np.array([0.0, 0.0])  # delta_dot = 0, T_dot = 0
-
+    t=[0]
     for _ in range(steps):
         curvature = 0.0  # prosta
         x = model.rk4_step(x, u, curvature, dt)
         traj.append(x.copy())
-
+        t.append(t[len(t)-1]+dt)
     traj = np.array(traj)
-
+    
     import matplotlib.pyplot as plt
     plt.figure(figsize=(10,6))
     plt.subplot(2,2,1)
-    plt.plot(traj[:,0], traj[:,1])
-    plt.xlabel("s [m]"); plt.ylabel("n [m]"); plt.title("Odchylenie od toru (n)")
+    plt.plot(t, traj[:,1])
+    plt.xlabel("t [s]"); plt.ylabel("n [m]"); plt.title("Odchylenie od toru (n)")
 
     plt.subplot(2,2,2)
-    plt.plot(traj[:,0], traj[:,2])
-    plt.xlabel("s [m]"); plt.ylabel("mu [rad]"); plt.title("Kąt względem toru (mu)")
+    plt.plot(t, traj[:,2])
+    plt.xlabel("t [s]"); plt.ylabel("mu [rad]"); plt.title("Kąt względem toru (mu)")
 
     plt.subplot(2,2,3)
-    plt.plot(traj[:,0], traj[:,3], label="vx")
-    plt.plot(traj[:,0], traj[:,4], label="vy")
-    plt.xlabel("s [m]"); plt.ylabel("Prędkości [m/s]"); plt.legend(); plt.title("vx, vy")
+    plt.plot(t, traj[:,3], label="vx")
+    plt.plot(t, traj[:,4], label="vy")
+    plt.xlabel("t [s]"); plt.ylabel("Prędkości [m/s]"); plt.legend(); plt.title("vx, vy")
 
     plt.subplot(2,2,4)
-    plt.plot(traj[:,0], traj[:,6], label="delta")
-    plt.xlabel("s [m]"); plt.ylabel("delta [rad]"); plt.title("Kąt skrętu (delta)")
+    plt.plot(t, traj[:,6], label="delta")
+    plt.xlabel("t [s]"); plt.ylabel("delta [rad]"); plt.title("Kąt skrętu (delta)")
 
     plt.tight_layout()
     plt.show()
