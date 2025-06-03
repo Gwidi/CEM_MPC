@@ -12,8 +12,11 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import colorednoise as cn
 
+# xglob
+# yglob
 
 # --- Model Pojazdu ---
+
 class BicycleModelCurvilinear:
     def __init__(self):
         self.m = 230         # masa [kg]
@@ -24,15 +27,25 @@ class BicycleModelCurvilinear:
         self.Cm = 0.3 * self.m
         self.Cr0 = 50
         self.Cr2 = 0.5
-        self.Bf, self.Cf, self.Df = 10.0, 1.3, 1.0 * self.m * 9.81 * self.lR / self.L
-        self.Br, self.Cr, self.Dr = 12.0, 1.3, 1.0 * self.m * 9.81 * self.lF / self.L
-        self.ptv = 3.0
 
+        self.Bf= 1.4928231239318848
+        self.Cf= 2.1563267707824707
+        self.Df= 0.7784228920936584
+        self.Br= 10.573360443115234
+        self.Cr= 1.0724537372589111
+        self.Dr= 0.8421050906181335
+
+
+        self.ptv = 3.0
+    def tire_forces_test(self,alpha):
+        F = self.Df * np.sin(self.Cf * np.arctan(self.Bf * alpha))
+        return F
     def tire_forces(self, vx, vy, r, delta):
         alpha_f = np.arctan2(vy + self.lF * r, vx) - delta
         alpha_r = np.arctan2(vy - self.lR * r, vx)
-        FyF = self.Df * np.sin(self.Cf * np.arctan(self.Bf * alpha_f))
-        FyR = self.Dr * np.sin(self.Cr * np.arctan(self.Br * alpha_r))
+        N=self.m*9.81/2
+        FyF = self.Df * np.sin(self.Cf * np.arctan(self.Bf * alpha_f))*N
+        FyR = self.Dr * np.sin(self.Cr * np.arctan(self.Br * alpha_r))*N
         return FyF, FyR
 
     def longitudinal_force(self, vx, T):
@@ -55,7 +68,8 @@ class BicycleModelCurvilinear:
         vy_dot = (FyR + FyF * np.cos(delta) - self.m * vx * r) / self.m
         r_dot = (FyF * self.lF * np.cos(delta) - FyR * self.lR + Mtv) / self.Iz
 
-
+        # (v_x*np.sin(mu)+v_y*np.cos(mu))*dt
+        # (v_x*np.cos(mu)+v_y*np.sin(mu))*dt
         return np.array([s_dot, n_dot, mu_dot, vx_dot, vy_dot, r_dot, delta_dot, T_dot])
 
     def rk4_step(self, x, u, curvature, dt):
@@ -228,7 +242,7 @@ def pure_straight_test(model, dt=0.05, steps=200, T_init=0.5, v0=1.0):
     Model dostaje tylko napęd, bez skrętu, bez toru (krzywizna=0).
     """
     # Stan początkowy: [s, n, mu, vx, vy, r, delta, T]
-    x = np.array([0, 0, 0, v0, 0, 0, 0, T_init])
+    x = np.array([0, 0, 0, v0, 0, 0, 0.4, T_init])
     traj = [x.copy()]
     u = np.array([0.0, 0.0])  # delta_dot = 0, T_dot = 0
     t=[0]
@@ -248,13 +262,15 @@ def pure_straight_test(model, dt=0.05, steps=200, T_init=0.5, v0=1.0):
     plt.subplot(2,2,2)
     plt.plot(t, traj[:,2])
     plt.xlabel("t [s]"); plt.ylabel("mu [rad]"); plt.title("Kąt względem toru (mu)")
-
+    
     plt.subplot(2,2,3)
     plt.plot(t, traj[:,3], label="vx")
     plt.plot(t, traj[:,4], label="vy")
     plt.xlabel("t [s]"); plt.ylabel("Prędkości [m/s]"); plt.legend(); plt.title("vx, vy")
 
     plt.subplot(2,2,4)
+    plt.plot(traj[:,0],traj[:,1])
+    plt.xlabel("t [s]"); plt.ylabel("x"); plt.title("y")
     plt.plot(t, traj[:,6], label="delta")
     plt.xlabel("t [s]"); plt.ylabel("delta [rad]"); plt.title("Kąt skrętu (delta)")
 
@@ -270,7 +286,11 @@ track_s, curvature = generate_test_track()
 env = RaceCarEnv(model, track_s, curvature)
 
 pure_straight_test(model, dt=0.05, steps=1000, T_init=0.5, v0=5.0)
-
+Fplot=[]
+for x in np.linspace(0,16/180*np.pi,100000):
+    Fplot.append(model.tire_forces_test(x))
+plt.figure()
+plt.plot(np.linspace(0,16/180*np.pi,100000),Fplot)
 
 
 obs = env.reset()
