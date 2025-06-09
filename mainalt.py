@@ -20,7 +20,7 @@ import colorednoise as cn
 class BicycleModelCurvilinear:
     def __init__(self):
         self.m = 230         # masa [kg]
-        self.Iz = 108.5      # bezwładność [kg m^2]
+        self.Iz = 75    # bezwładność [kg m^2]
         self.lF = 0.9
         self.lR = 1.0
         self.L = self.lF + self.lR
@@ -30,10 +30,10 @@ class BicycleModelCurvilinear:
 
         self.Bf= 1.4928231239318848
         self.Cf= 2.1563267707824707
-        self.Df= 0.7784228920936584
+        self.Df= 0.015784228920936584
         self.Br= 10.573360443115234
         self.Cr= 1.0724537372589111
-        self.Dr= 0.8421050906181335
+        self.Dr= 0.011050906181335
 
 
         self.ptv = 3.0
@@ -93,7 +93,7 @@ def generate_test_track(num_points=10000):
     #curvature = 0.05 * np.sin(0.1 * s)
     curvature=np.ones(num_points)*0.02
     return s, curvature
-def j_LTO(x, u, dt, R, model, curvature,q_beta=0.5,qn=500,qmu=100):
+def j_LTO(x, u, dt, R, model, curvature,q_beta=0.1,qn=10,qmu=0):
     """
     Evaluate the j_LTO function.
 
@@ -288,13 +288,13 @@ model = BicycleModelCurvilinear()
 track_s, curvature = generate_test_track()
 env = RaceCarEnv(model, track_s, curvature)
 
-# pure_straight_test(model, dt=0.05, steps=1000, T_init=0.5, v0=5.0)
-# Fplot=[]
-# a=16
-# for x in np.linspace(0,a/180*np.pi,100000):
-#     Fplot.append(model.tire_forces_test(x))
-# plt.figure()
-# plt.plot(np.linspace(0,a/180*np.pi,100000),Fplot)
+pure_straight_test(model, dt=0.05, steps=1000, T_init=0.5, v0=5.0)
+Fplot=[]
+a=16
+for x in np.linspace(0,a/180*np.pi,100000):
+    Fplot.append(model.tire_forces_test(x))
+plt.figure()
+plt.plot(np.linspace(0,a/180*np.pi,100000),Fplot)
 
 
 obs = env.reset()
