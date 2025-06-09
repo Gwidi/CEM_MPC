@@ -38,11 +38,14 @@ class BicycleModelCurvilinear:
 
         self.ptv = 3.0
     def tire_forces_test(self,alpha):
+        alpha=5*alpha
         F = self.Df * np.sin(self.Cf * np.arctan(self.Bf * alpha))
         return F
     def tire_forces(self, vx, vy, r, delta):
         alpha_f = np.arctan2(vy + self.lF * r, vx) - delta
         alpha_r = np.arctan2(vy - self.lR * r, vx)
+        alpha_f=5*alpha_f
+        alpha_r=5*alpha_r
         N=self.m*9.81/2
         FyF = self.Df * np.sin(self.Cf * np.arctan(self.Bf * alpha_f))*N
         FyR = self.Dr * np.sin(self.Cr * np.arctan(self.Br * alpha_r))*N
@@ -285,12 +288,13 @@ model = BicycleModelCurvilinear()
 track_s, curvature = generate_test_track()
 env = RaceCarEnv(model, track_s, curvature)
 
-pure_straight_test(model, dt=0.05, steps=1000, T_init=0.5, v0=5.0)
-Fplot=[]
-for x in np.linspace(0,16/180*np.pi,100000):
-    Fplot.append(model.tire_forces_test(x))
-plt.figure()
-plt.plot(np.linspace(0,16/180*np.pi,100000),Fplot)
+# pure_straight_test(model, dt=0.05, steps=1000, T_init=0.5, v0=5.0)
+# Fplot=[]
+# a=16
+# for x in np.linspace(0,a/180*np.pi,100000):
+#     Fplot.append(model.tire_forces_test(x))
+# plt.figure()
+# plt.plot(np.linspace(0,a/180*np.pi,100000),Fplot)
 
 
 obs = env.reset()
