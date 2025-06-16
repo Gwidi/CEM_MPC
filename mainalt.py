@@ -91,9 +91,9 @@ class BicycleModelCurvilinear:
 def generate_test_track(num_points=10000):
     s = np.linspace(0, 320, num_points)
     #curvature = 0.05 * np.sin(0.1 * s)
-    curvature=np.ones(num_points)*0.02
+    curvature=np.zeros(num_points)*0.02
     return s, curvature
-def j_LTO(x, u, dt, R, model, curvature,q_beta=0.1,qn=10,qmu=0):
+def j_LTO(x, u, dt, R, model, curvature,q_beta=0.1,qn=10,qmu=50):
     """
     Evaluate the j_LTO function.
 
@@ -129,14 +129,14 @@ def cem_control(model, x0, track_s, curvature, dt=0.05,
     
     mu=np.ones((horizon,2))*np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
     std=np.ones((horizon,2))*[abs(ddeltalower-ddeltaupper)/2,abs(dTlower-dTupper)/2]
-    
+    R=np.eye(2)*0
     for i in range(iterations):
         actions = cn.powerlaw_psd_gaussian(beta, (samples,horizon,2))
         actions=actions*std+mu
         
         actions[:,:,0]=np.clip(actions[:,:,0],ddeltalower,ddeltaupper)
         actions[:,:,1]=np.clip(actions[:,:,1],dTlower,dTupper)
-        
+        #actions[0,:,0]=actions[0,:,0]*0
         costs =[]
         for s in actions:
             cost=0 
@@ -147,9 +147,10 @@ def cem_control(model, x0, track_s, curvature, dt=0.05,
                 idx = np.argmin(np.abs(track_s - x[0]%max(track_s)))
                 curv = curvature[idx]
                 traj.append(model.rk4_step(x,h,curv,dt))
-        
+            
             for x,y in zip(traj,s):
-                cost+=j_LTO(x,y,dt,np.eye(len(y)),model,curv)
+                
+                cost+=j_LTO(x,y,dt,R,model,curv)
             costs.append(cost)
         # for x in actions:
         #     idx = np.argmin(np.abs(track_s - x0[0]%max(track_s)))
@@ -233,7 +234,7 @@ class RaceCarEnv(gym.Env):
         self.car_patch.angle = angle
         self.step_count+=1
         self.ax.set_title(f"Step {self.step_count}")
-        plt.pause(0.07)
+        plt.pause(0.01)
 
     def close(self):
         plt.show(block=True)
@@ -288,20 +289,20 @@ model = BicycleModelCurvilinear()
 track_s, curvature = generate_test_track()
 env = RaceCarEnv(model, track_s, curvature)
 
-pure_straight_test(model, dt=0.05, steps=1000, T_init=0.5, v0=5.0)
-Fplot=[]
-a=16
-for x in np.linspace(0,a/180*np.pi,100000):
-    Fplot.append(model.tire_forces_test(x))
-plt.figure()
-plt.plot(np.linspace(0,a/180*np.pi,100000),Fplot)
+#pure_straight_test(model, dt=0.05, steps=1000, T_init=0.5, v0=5.0)
+# Fplot=[]
+# a=16
+# for x in np.linspace(0,a/180*np.pi,100000):
+#     Fplot.append(model.tire_forces_test(x))
+# plt.figure()
+# plt.plot(np.linspace(0,a/180*np.pi,100000),Fplot)
 
 
 obs = env.reset()
 
 for _ in range(200):
     action = cem_control(model, obs, track_s, curvature)
-    obs = env.step(action)
+    obs = env.step(action[0:2])
     print("T aktualne:", obs[7])
     
 
