@@ -11,9 +11,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import colorednoise as cn
+import time
 mu=None
-mus=[]
-stds=[]
+std=None
 # xglob
 # yglob
 
@@ -21,8 +21,8 @@ stds=[]
 
 class BicycleModelCurvilinear:
     def __init__(self):
-        self.m = 230         # masa [kg]
-        self.Iz = 75    # bezwładność [kg m^2]
+        self.m = 230        # masa [kg]
+        self.Iz = 100    # bezwładność [kg m^2]
         self.lF = 0.9
         self.lR = 1.0
         self.L = self.lF + self.lR
@@ -86,16 +86,17 @@ class BicycleModelCurvilinear:
         # OGRANICZENIE T (napędu)
         # OGRANICZENIE delta (kąt skrętu), opcjonalnie:
         # x_new[6] = np.clip(x_new[6], -np.pi/4, np.pi/4)
-        x_new[3] = np.clip(x_new[3], 5.0, np.inf)
+        #x_new[3] = np.clip(x_new[3], 5.0, np.inf)
         return x_new
 
 # --- Generator Trasy ---
 def generate_test_track(num_points=10000):
-    s = np.linspace(0, 320, num_points)
+    track_length=320
+    s = np.linspace(0, track_length, num_points)
     #curvature = 0.05 * np.sin(0.1 * s)
-    curvature=np.ones(num_points)*0.02*0.0
+    curvature=np.ones(num_points)*np.pi*2/track_length
     return s, curvature
-def j_LTO(x, u, dt, R, model, curvature,q_beta=0.1,qn=10,qmu=50):
+def j_LTO(x, u, dt, R, model, curvature,q_beta=5,qn=10,qmu=0):
     """
     Evaluate the j_LTO function.
 
@@ -126,24 +127,35 @@ def j_LTO(x, u, dt, R, model, curvature,q_beta=0.1,qn=10,qmu=50):
     return term1 + term2 + term3 + term4 + term5
 # --- Cross-Entropy MPC ---
 def cem_control(model, x0, track_s, curvature, dt=0.05,
-                samples=64, elite_frac=0.2,iterations=5, dTupper=1.0,dTlower=-1.0, ddeltaupper=1.0, ddeltalower=-1.0,horizon=20, last_action_sequence=None):
+                samples=50, elite_frac=0.2,iterations=2, dTupper=1.0,dTlower=-1.0, ddeltaupper=1.0, ddeltalower=-1.0,horizon=10, last_action_sequence=None):
     beta = 1 # the exponent
-
     global mu
     global std
+    initmu=np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
+    initstd=[abs(ddeltalower-ddeltaupper)/2,abs(dTlower-dTupper)/2]
     if mu is None:
-        mu=np.ones((horizon,2))*np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
-    std=np.ones((horizon,2))*[abs(ddeltalower-ddeltaupper)/2,abs(dTlower-dTupper)/2]
+        mu=np.ones((horizon,2))*initmu
+    else:
+        mu=np.vstack((mu[1:horizon],initmu))
+    if std is None:
+        std=np.ones((horizon,2))*initstd
+    else:
+        std=np.vstack((std[1:horizon],initstd))
+        
 
 
     R=np.eye(2)*0
     for i in range(iterations):
+        starti=time.perf_counter_ns()
         actions = cn.powerlaw_psd_gaussian(beta, (samples,horizon,2))
+        endi=time.perf_counter_ns()
+        # starti=time.perf_counter_ns()
         actions=actions*std+mu
-        
+        # endi=time.perf_counter_ns()
+        # print(str(endi-starti))
         actions[:,:,0]=np.clip(actions[:,:,0],ddeltalower,ddeltaupper)
         actions[:,:,1]=np.clip(actions[:,:,1],dTlower,dTupper)
-        #actions[0,:,0]=actions[0,:,0]*0
+        #actions[1,:,0]=actions[0,:,0]*0
         costs =[]
         for s in actions:
             cost=0 
@@ -165,16 +177,20 @@ def cem_control(model, x0, track_s, curvature, dt=0.05,
         #     nextstates.append(model.rk4_step(x0,x,curv,dt))
         # for x,y in zip(nextstates,actions):
         #     costs.append(j_LTO(x,y,dt,np.eye(len(y)),model,curv))
+        # starti=time.perf_counter_ns()
         eliteuntruncated=[x for (_,x) in sorted(zip(costs, actions), key=lambda pair: pair[0])]
+        # endi=time.perf_counter_ns()
+        # print("-"+str(endi-starti))
         elitetruncated=eliteuntruncated[0:round(elite_frac*len(eliteuntruncated))]
         
         mu=np.mean(elitetruncated,axis=0)
-        mus.append(mu[0][0])
+        #mus.append(mu[0][0])
         std=np.std(elitetruncated,axis=0)
 
-        stds.append(std[0][0])
+        #stds.append(std[0][0])
+        # elitetruncated[0][0,0]=-0.5
+        # elitetruncated[0][0,1]=0.0
     return elitetruncated[0]
-    return elitetruncated[0], elitetruncated[0]
 
 # --- Środowisko ---
 class RaceCarEnv(gym.Env):
@@ -197,20 +213,25 @@ class RaceCarEnv(gym.Env):
         self.reset()
 
     def reset(self):
-        self.state = np.array([0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 0.0])
+        self.state = np.array([0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0])
         self.step_count = 0
         return self.state.copy()
 
     def step(self, action):
-        for a in action:    
+        keepstate=self.state
+        for indexofa,a in enumerate(action):    
             delta_dot, T_dot = a
             u = np.array([delta_dot, T_dot])
     
-            idx = np.argmin(np.abs(self.track_s - self.state[0]))
-            curv = self.curvature[idx%len(curvature)]
+            idx = np.argmin(np.abs(self.track_s - self.state[0]%max(track_s)))
+            curv = self.curvature[idx]
             next_state = self.model.rk4_step(self.state, u, curv, self.dt)
             self.state = next_state
             env.render()
+            if indexofa==0:
+                finalstate=next_state
+        self.state = finalstate
+        env.render()
 
         return self.state.copy()
 
@@ -234,7 +255,7 @@ class RaceCarEnv(gym.Env):
 
     def render(self, mode='human'):
         s, n, mu = self.state[0], self.state[1], self.state[2]
-        idx = np.argmin(np.abs(self.track_s - s))
+        idx = np.argmin(np.abs(self.track_s - s%max(track_s)))
         ref_x, ref_y = self.track_x[idx], self.track_y[idx]
         ref_theta = np.sum(self.curvature[:idx]) * (self.track_s[1] - self.track_s[0])
         x_car = ref_x - n * np.sin(ref_theta)
@@ -309,28 +330,20 @@ env = RaceCarEnv(model, track_s, curvature)
 
 
 obs = env.reset()
-import cv2
-keyp=ord('n')
-for _ in range(200):
-    keyp=cv2.waitKey()
-    if keyp!=ord('q'):
-        action = cem_control(model, obs, track_s, curvature)
-        obs = env.step(action[0:2])
-        print("T aktualne:", obs[7])
-    else:
-        break
+while True:
+    # start=time.perf_counter_ns()
+    action = cem_control(model, obs, track_s, curvature)
+    # end=time.perf_counter_ns()
+    # print("cemczas"+str(end-start))
+    obs = env.step(action)
+    #print("T aktualne:", obs[7])
 last_sequence = None
-
-for _ in range(200):
-    action_sequence, last_sequence = cem_control(model, obs, track_s, curvature, last_action_sequence=last_sequence)
-    action = action_sequence[0]
-    obs = env.step([action])
     
 
     
 env.close()
-mu=np.array(mu)
-std=np.array(std)
-plt.plot(mu,'b')
-plt.plot(mu-std,'r')
-plt.plot(mu+std,'r')
+# mu=np.array(mu)
+# std=np.array(std)
+# plt.plot(mu,'b')
+# plt.plot(mu-std,'r')
+# plt.plot(mu+std,'r')

@@ -1,0 +1,5 @@
+m: 0.1
+I_z: 0.05
+lr: 0.05
+# tau_omega: 0.5
+# tau_delta: 0.5
