@@ -86,17 +86,17 @@ class BicycleModelCurvilinear:
         # OGRANICZENIE T (napędu)
         # OGRANICZENIE delta (kąt skrętu), opcjonalnie:
         # x_new[6] = np.clip(x_new[6], -np.pi/4, np.pi/4)
-        #x_new[3] = np.clip(x_new[3], 5.0, np.inf)
+        x_new[3] = np.clip(x_new[3], 5.0, np.inf)
         return x_new
 
 # --- Generator Trasy ---
 def generate_test_track(num_points=10000):
-    track_length=320
+    track_length=50
     s = np.linspace(0, track_length, num_points)
     #curvature = 0.05 * np.sin(0.1 * s)
     curvature=np.ones(num_points)*np.pi*2/track_length
     return s, curvature
-def j_LTO(x, u, dt, R, model, curvature,q_beta=5,qn=10,qmu=0):
+def j_LTO(x, u, dt, R, model, curvature,q_beta=5,qn=20,qmu=10):
     """
     Evaluate the j_LTO function.
 
@@ -127,8 +127,8 @@ def j_LTO(x, u, dt, R, model, curvature,q_beta=5,qn=10,qmu=0):
     return term1 + term2 + term3 + term4 + term5
 # --- Cross-Entropy MPC ---
 def cem_control(model, x0, track_s, curvature, dt=0.05,
-                samples=50, elite_frac=0.2,iterations=2, dTupper=1.0,dTlower=-1.0, ddeltaupper=1.0, ddeltalower=-1.0,horizon=10, last_action_sequence=None):
-    beta = 1 # the exponent
+                samples=64, elite_frac=0.2,iterations=2, dTupper=1.0,dTlower=-1.0, ddeltaupper=100.0, ddeltalower=-100.0,horizon=20, last_action_sequence=None):
+    beta = 200 # the exponent
     global mu
     global std
     initmu=np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
@@ -146,9 +146,9 @@ def cem_control(model, x0, track_s, curvature, dt=0.05,
 
     R=np.eye(2)*0
     for i in range(iterations):
-        starti=time.perf_counter_ns()
+        #starti=time.perf_counter_ns()
         actions = cn.powerlaw_psd_gaussian(beta, (samples,horizon,2))
-        endi=time.perf_counter_ns()
+        #endi=time.perf_counter_ns()
         # starti=time.perf_counter_ns()
         actions=actions*std+mu
         # endi=time.perf_counter_ns()
@@ -213,7 +213,7 @@ class RaceCarEnv(gym.Env):
         self.reset()
 
     def reset(self):
-        self.state = np.array([0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0])
+        self.state = np.array([0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 0.0])
         self.step_count = 0
         return self.state.copy()
 
