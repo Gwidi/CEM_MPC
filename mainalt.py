@@ -124,11 +124,17 @@ def j_LTO(x, u, dt, R, model, curvature,q_beta=0.1,qn=10,qmu=50):
     return term1 + term2 + term3 + term4 + term5
 # --- Cross-Entropy MPC ---
 def cem_control(model, x0, track_s, curvature, dt=0.05,
-                samples=64, elite_frac=0.2,iterations=2, dTupper=1.0,dTlower=-1.0, ddeltaupper=1.0, ddeltalower=-1.0,horizon=20):
+                samples=64, elite_frac=0.2,iterations=5, dTupper=1.0,dTlower=-1.0, ddeltaupper=1.0, ddeltalower=-1.0,horizon=20, last_action_sequence=None):
     beta = 1 # the exponent
-    
-    mu=np.ones((horizon,2))*np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
-    std=np.ones((horizon,2))*[abs(ddeltalower-ddeltaupper)/2,abs(dTlower-dTupper)/2]
+    if last_action_sequence is not None:
+        mu = np.roll(last_action_sequence, -1, axis=0)  # shift o 1 w lewo
+        # nowy ostatni ster randomowy (lub z mu), żeby zachować długość
+        mu[-1] = np.mean([[ddeltalower, ddeltaupper], [dTlower, dTupper]], axis=1)
+        std = np.ones((horizon, 2)) * [abs(ddeltalower - ddeltaupper)/2, abs(dTlower - dTupper)/2]
+    else:
+        mu=np.ones((horizon,2))*np.mean([[ddeltalower,ddeltaupper],[dTlower,dTupper]],axis=1)
+        std=np.ones((horizon,2))*[abs(ddeltalower-ddeltaupper)/2,abs(dTlower-dTupper)/2]
+
     R=np.eye(2)*0
     for i in range(iterations):
         actions = cn.powerlaw_psd_gaussian(beta, (samples,horizon,2))
@@ -164,7 +170,7 @@ def cem_control(model, x0, track_s, curvature, dt=0.05,
         mu=np.mean(elitetruncated,axis=0)
         
         std=np.std(elitetruncated,axis=0)
-    return elitetruncated[0]
+    return elitetruncated[0], elitetruncated[0]
 
 # --- Środowisko ---
 class RaceCarEnv(gym.Env):
@@ -299,11 +305,12 @@ env = RaceCarEnv(model, track_s, curvature)
 
 
 obs = env.reset()
+last_sequence = None
 
 for _ in range(200):
-    action = cem_control(model, obs, track_s, curvature)
-    obs = env.step(action[0:2])
-    print("T aktualne:", obs[7])
+    action_sequence, last_sequence = cem_control(model, obs, track_s, curvature, last_action_sequence=last_sequence)
+    action = action_sequence[0]
+    obs = env.step([action])
     
 
 env.close()
